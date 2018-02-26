@@ -199,9 +199,12 @@ local function main(params)
             ccd[j] = math.sqrt( (px - cx) ^ 2 + (py - cy) ^ 2 )
           elseif metric == -1 then -- Manhattan
             ccd[j] = ( math.abs(px - cx) + math.abs(py - cy) )
+          elseif metric == 0.5 then -- Minkowski 0.5
+            local a, b = math.abs(px - cx), math.abs(py - cy)
+            ccd[j] = math.sqrt(a * b) * 2 + a + b
           elseif metric >= 0 then  -- Minkowski
             -- inf = Chebyshev
-            -- 2 = Euclidian
+            -- 2 = Euclidean
             -- 1 = Manhattan
             ccd[j] = ( math.abs(px - cx) ^ metric + math.abs(py - cy) ^ metric ) ^ (1 / metric)
           end
@@ -223,6 +226,10 @@ local function main(params)
               --ccd[j] = ccd[j] + math.sqrt(torch.add(cluster_x[{j, {1, n}}], -px):double():pow(2):add( torch.add(cluster_y[{j, {1, n}}], -py):double():pow(2) ):min())
             elseif cluster_metric == -1 then -- Манхэттен
               ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):abs():add( torch.add(cluster_y[{j, {1, n}}], -py):abs() ):min()
+            elseif cluster_metric == 0.5 then -- Минковский 0.5
+              local a = torch.add(cluster_x[{j, {1, n}}], -px):float():abs()
+              local b = torch.add(cluster_y[{j, {1, n}}], -py):float():abs()
+              ccd[j] = ccd[j] + torch.cmul(a, b):sqrt():mul(2):add(a):add(b):min()
             elseif cluster_metric >= 0 then  -- Минковский
               ccd[j] = ccd[j] + (
                                 -- faster
