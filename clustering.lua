@@ -3,14 +3,15 @@ require 'torch'    -- https://github.com/torch/torch7
 require 'image'    -- https://github.com/torch/image
 
 
--- -6 - random
--- -5 - red
--- -4 - none
+-- -7 - random
+-- -6 - red
+-- -5 - none
+-- -4 - minimal
 -- -3 - Chebyshev
 -- -2 - Euclid
 -- -1 - Manhattan
 -- 0+ - Minkowski
-local metric = -2
+local metric, cluster_metric = -2, -5
 
 
 local cmd = torch.CmdLine()
@@ -24,19 +25,20 @@ cmd:option('-i', '/media/sf_VMo/clusters.png', 'Output image name.')
 cmd:option('-s', 2, 'Image scale.')
 cmd:option('-r', '', 'Random seed.')
 cmd:option('-f', 5, 'Stable frames, 2N.')
-cmd:option('-c', false, 'Stick to closest points.')
 cmd:option('-m', metric, [[
-Metric: -6 - random clusters
-             -5 - 1st (red) cluster
-             -4 - unassigned clusters
+Metric: -7 - random clusters
+             -6 - 1st (red) cluster
+             -5 - unassigned clusters
+             -4 - minimal of both deltas
              -3 - Chebyshev
              -2 - Euclid
              -1 - Manhattan
            >= 0 - Minkowski
     ]])
+cmd:option('-c', cluster_metric, 'Stick to cluster points by chosen metric, same as \'-m\'.')
 cmd:text()
 local params = cmd:parse(arg)
-metric = params.m
+local metric, cluster_metric = params.m, params.c
 
 if params.r == '' then
   math.randomseed(os.clock() * 1048576.0) ; math.randomseed(os.clock() * 1048576.0 * math.random()) ; math.randomseed(os.clock() * 1048576.0 * math.random())
@@ -179,36 +181,57 @@ local function main(params)
     cluster_y:fill(0)
     for i = 1, csv_data:size(1), 1 do
       local px, py = csv_data[i][1], csv_data[i][2]
-      if metric == -6 then         -- случайный
+      if metric == -7 then         -- random cluster
         xy_cluster[py][px] = math.random(cluster_colors:size(1))
-      elseif metric == -5 then     -- первый
+      elseif metric == -6 then     -- 1st cluster
         xy_cluster[py][px] = 1
-      elseif metric == -4 then     -- не назначать
-      elseif metric >= -3 then
+      elseif metric == -5 then     -- none
+      elseif metric >= -4 then
         local ccd = torch.FloatTensor(cluster_centers:size(1)):fill(0)
         --local cpd = torch.FloatTensor(cluster_centers:size(1)):fill(0)
         for j = 1, cluster_centers:size(1), 1 do
           local cx, cy = cluster_centers[j][1], cluster_centers[j][2]
-          if metric == -3 then     -- Чебышёв
+          if metric == -4 then     -- minimal
+            ccd[j] = math.min( math.abs(px - cx), math.abs(py - cy) )
+          elseif metric == -3 then -- Chebyshev
             ccd[j] = math.max( math.abs(px - cx), math.abs(py - cy) )
-          elseif metric == -2 then -- Евклид
+          elseif metric == -2 then -- Euclid
             ccd[j] = math.sqrt( (px - cx) ^ 2 + (py - cy) ^ 2 )
-          elseif metric == -1 then -- Манхэттен
+          elseif metric == -1 then -- Manhattan
             ccd[j] = ( math.abs(px - cx) + math.abs(py - cy) )
-          elseif metric >= 0 then  -- Минковский
+          elseif metric >= 0 then  -- Minkowski
             -- inf = Chebyshev
             -- 2 = Euclidian
             -- 1 = Manhattan
             ccd[j] = ( math.abs(px - cx) ^ metric + math.abs(py - cy) ^ metric ) ^ (1 / metric)
           end
-          if params.c then
-            local n = cluster_num[j]
-            if n > 0 then
-              --ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):abs():add( torch.add(cluster_y[{j, {1, n}}], -py):abs() ):min()
-              --ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):double():pow(2):add( torch.add(cluster_y[{j, {1, n}}], -py):double():pow(2) ):sqrt():min()
+          local n = cluster_num[j] -- points in cluster
+          if n > 0 then
+            if cluster_metric == -7 then     -- случайный кластер
+              ccd[j] = ccd[j] + math.random(xy_cluster:size(1) + xy_cluster:size(2) + 1)
+            elseif cluster_metric == -6 then -- первый кластер
+              if j > 1 then ccd[j] = ccd[j] + xy_cluster:size(1) + xy_cluster:size(2) + 1 end
+            elseif cluster_metric == -5 then -- не присваивать
+            elseif cluster_metric == -4 then -- минимальная из дельт координат
+              ccd[j] = ccd[j] + math.min( torch.add(cluster_x[{j, {1, n}}], -px):abs():min(), torch.add(cluster_y[{j, {1, n}}], -py):abs():min() )
+            elseif cluster_metric == -3 then -- Чебышёв
+              ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):abs():cmax( torch.add(cluster_y[{j, {1, n}}], -py):abs() ):min()
+            elseif cluster_metric == -2 then -- Евклид
               local a = torch.add(cluster_x[{j, {1, n}}], -px)
               local b = torch.add(cluster_y[{j, {1, n}}], -py)
-              ccd[j] = ccd[j] + math.sqrt(a:cmul(a):add(b:cmul(b)):min())
+              ccd[j] = ccd[j] + math.sqrt( a:cmul(a):add(b:cmul(b)):min() )
+              --ccd[j] = ccd[j] + math.sqrt(torch.add(cluster_x[{j, {1, n}}], -px):double():pow(2):add( torch.add(cluster_y[{j, {1, n}}], -py):double():pow(2) ):min())
+            elseif cluster_metric == -1 then -- Манхэттен
+              ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):abs():add( torch.add(cluster_y[{j, {1, n}}], -py):abs() ):min()
+            elseif cluster_metric >= 0 then  -- Минковский
+              ccd[j] = ccd[j] + (
+                                -- faster
+                                  torch.add(cluster_x[{j, {1, n}}], -px):float():abs():pow(cluster_metric):add(
+                                  torch.add(cluster_y[{j, {1, n}}], -py):float():abs():pow(cluster_metric)
+                                -- slower
+                                --torch.add(cluster_x[{j, {1, n}}], -px):abs():float():pow(cluster_metric):add(
+                                --torch.add(cluster_y[{j, {1, n}}], -py):abs():float():pow(cluster_metric)
+                                ):min() ) ^ (1 / cluster_metric)
             end
           end
         end
