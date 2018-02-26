@@ -66,16 +66,20 @@ local frame = 0
 
 local function show_points()
   local s = params.s
+  for i = 1, cluster_centers:size(1), 1 do
+    for j = 1, cluster_num[i], 1 do
+      local xo = (cluster_x[i][j] - 1) * s
+      local yo = (cluster_y[i][j] - 1) * s
+      img[{{}, {yo + 1, yo + s}, {xo + 1, xo + s}}] = cluster_colors[i]:view(img:size(1), 1, 1):expand(img:size(1), s, s)
+    end
+  end
   for x = 1, xy_points:size(2), 1 do
     for y = 1, xy_points:size(1), 1 do
-      if xy_points[y][x] ~= 0 then
-        local c = xy_cluster[y][x]
-        local xo = (x - 1) * s
-        local yo = (y - 1) * s
-        if c == 0 then
+      if xy_cluster[y][x] == 0 then
+        if xy_points[y][x] ~= 0 then
+          local xo = (x - 1) * s
+          local yo = (y - 1) * s
           img[{{}, {yo + 1, yo + s}, {xo + 1, xo + s}}] = 0
-        else
-          img[{{}, {yo + 1, yo + s}, {xo + 1, xo + s}}] = cluster_colors[c]:view(img:size(1), 1, 1):expand(img:size(1), s, s)
         end
       end
     end
@@ -173,7 +177,6 @@ local function main(params)
     cluster_num:fill(0) -- number of points
     cluster_x:fill(0)
     cluster_y:fill(0)
-    local pc = 1000
     for i = 1, csv_data:size(1), 1 do
       local px, py = csv_data[i][1], csv_data[i][2]
       if metric == -6 then         -- случайный
@@ -199,13 +202,13 @@ local function main(params)
             ccd[j] = ( math.abs(px - cx) ^ metric + math.abs(py - cy) ^ metric ) ^ (1 / metric)
           end
           if params.c then
-            if cluster_num[j] > 0 then
-              local min_dist = xy_cluster:size(1) + xy_cluster:size(2) + 1
-              for k = 1, cluster_num[j], 1 do
-                local d = math.abs(cluster_x[j][k] - px) + math.abs(cluster_y[j][k] - py)
-                if d < min_dist then min_dist = d end
-              end
-              ccd[j] = ccd[j] + min_dist
+            local n = cluster_num[j]
+            if n > 0 then
+              --ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):abs():add( torch.add(cluster_y[{j, {1, n}}], -py):abs() ):min()
+              --ccd[j] = ccd[j] + torch.add(cluster_x[{j, {1, n}}], -px):double():pow(2):add( torch.add(cluster_y[{j, {1, n}}], -py):double():pow(2) ):sqrt():min()
+              local a = torch.add(cluster_x[{j, {1, n}}], -px)
+              local b = torch.add(cluster_y[{j, {1, n}}], -py)
+              ccd[j] = ccd[j] + math.sqrt(a:cmul(a):add(b:cmul(b)):min())
             end
           end
         end
@@ -222,21 +225,16 @@ local function main(params)
           end
         end
       end
-      pc = pc - 1 ; if pc <= 0 then pc = 1000 ; print(i) end
       --show_points() ; show_centers() ; save_image(img)
     end
     img:fill(1); show_points() ; show_centers() ; save_image(img)
 
     -- centers of cluster, averaging coordinates of cluster points
     for i = 1, cluster_centers:size(1), 1 do
-      local cluster_points_num = cluster_num[i]
-      if cluster_points_num > 0 then
-        local cx, cy = 0, 0
-        for j = 1, cluster_points_num, 1 do
-          cx = cx + cluster_x[i][j]
-          cy = cy + cluster_y[i][j]
-        end
-        cx, cy = cx / cluster_points_num, cy / cluster_points_num
+      local n = cluster_num[i]
+      if n > 0 then
+        local cx = cluster_x[{i, {1, n}}]:sum() / n
+        local cy = cluster_y[{i, {1, n}}]:sum() / n
 --        local max_dist = 0
 --        for j = 1, cluster_points_num, 1 do
 --          local d = math.sqrt( (cluster_points[i][j][1] - cx) ^ 2 + (cluster_points[i][j][2] - cy) ^ 2 )
