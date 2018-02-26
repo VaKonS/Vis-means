@@ -23,7 +23,8 @@ cmd:option('-v', 250, 'Values range.')
 cmd:option('-i', '/media/sf_VMo/clusters.png', 'Output image name.')
 cmd:option('-s', 2, 'Image scale.')
 cmd:option('-r', '', 'Random seed.')
-cmd:option('-t', 7, 'Stable frames, 2N-2.')
+cmd:option('-f', 5, 'Stable frames, 2N.')
+cmd:option('-c', false, 'Stick to closest points.')
 cmd:option('-m', metric, [[
 Metric: -6 - random clusters
              -5 - 1st (red) cluster
@@ -57,6 +58,9 @@ local xy_points = torch.ByteTensor(params.v, params.v):fill(0)
 local xy_cluster = torch.LongTensor(params.v, params.v):fill(0)
 local cluster_centers = torch.LongTensor(cluster_colors:size(1), 2):fill(0)
 local csv_data = torch.FloatTensor(params.n, 2)
+local cluster_num = torch.LongTensor(cluster_colors:size(1)) -- number of points
+local cluster_x = torch.LongTensor(cluster_colors:size(1), csv_data:size(1))
+local cluster_y = torch.LongTensor(cluster_colors:size(1), csv_data:size(1))
 local frame = 0
 
 
@@ -166,6 +170,10 @@ local function main(params)
   repeat
     -- assigning points to clusters
     xy_cluster:fill(0)
+    cluster_num:fill(0) -- number of points
+    cluster_x:fill(0)
+    cluster_y:fill(0)
+    local pc = 1000
     for i = 1, csv_data:size(1), 1 do
       local px, py = csv_data[i][1], csv_data[i][2]
       if metric == -6 then         -- случайный
@@ -190,36 +198,53 @@ local function main(params)
             -- 1 = Manhattan
             ccd[j] = ( math.abs(px - cx) ^ metric + math.abs(py - cy) ^ metric ) ^ (1 / metric)
           end
+          if params.c then
+            if cluster_num[j] > 0 then
+              local min_dist = xy_cluster:size(1) + xy_cluster:size(2) + 1
+              for k = 1, cluster_num[j], 1 do
+                local d = math.abs(cluster_x[j][k] - px) + math.abs(cluster_y[j][k] - py)
+                if d < min_dist then min_dist = d end
+              end
+              ccd[j] = ccd[j] + min_dist
+            end
+          end
         end
         local m = ccd:min()
         for j = 1, ccd:size(1), 1 do
           if ccd[j] == m then
             xy_cluster[py][px] = j
+            local n = cluster_num[j] + 1
+            cluster_x[j][n] = px
+            cluster_y[j][n] = py
+            cluster_num[j] = n
             --print(ccd) ; print("px,py: ", px,py, "cx,cy: ", cluster_centers[j][1],cluster_centers[j][2], "min: ", m, "; cluster: ", j)
             break
           end
         end
       end
+      pc = pc - 1 ; if pc <= 0 then pc = 1000 ; print(i) end
       --show_points() ; show_centers() ; save_image(img)
     end
     img:fill(1); show_points() ; show_centers() ; save_image(img)
 
     -- centers of cluster, averaging coordinates of cluster points
     for i = 1, cluster_centers:size(1), 1 do
-      local cx, cy, cc = 0, 0, 0
-      for j = 1, csv_data:size(1), 1 do
-        local px, py = csv_data[j][1], csv_data[j][2]
-        if xy_cluster[py][px] == i then
-          cx = cx + px
-          cy = cy + py
-          cc = cc + 1
+      local cluster_points_num = cluster_num[i]
+      if cluster_points_num > 0 then
+        local cx, cy = 0, 0
+        for j = 1, cluster_points_num, 1 do
+          cx = cx + cluster_x[i][j]
+          cy = cy + cluster_y[i][j]
         end
-      end
-      if cc ~= 0 then
-        local x, y = cx / cc, cy / cc
-        if (math.abs(cluster_centers[i][1] - x) > 0.5) or (math.abs(cluster_centers[i][2] - y) > 0.5) then
-          cluster_centers[i][1] = x
-          cluster_centers[i][2] = y
+        cx, cy = cx / cluster_points_num, cy / cluster_points_num
+--        local max_dist = 0
+--        for j = 1, cluster_points_num, 1 do
+--          local d = math.sqrt( (cluster_points[i][j][1] - cx) ^ 2 + (cluster_points[i][j][2] - cy) ^ 2 )
+--          if d > max_dist then max_dist = d
+--        end
+        if (math.abs(cluster_centers[i][1] - cx) > 0.5) or (math.abs(cluster_centers[i][2] - cy) > 0.5) then
+          cluster_centers[i][1] = cx
+          cluster_centers[i][2] = cy
           stable = 0
         end
       end
@@ -227,7 +252,7 @@ local function main(params)
     img:fill(1); show_points() ; show_centers() ; save_image(img)
     stable = stable + 1
 
-  until stable >= params.t
+  until stable > params.f
 
 end
 
